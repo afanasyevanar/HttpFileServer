@@ -149,7 +149,7 @@ bool HttpFileServer::sendFileToClient(int socket, string fileName)
     stringstream response;
     response << "HTTP/1.1 200 OK\r\n"
              << "Version: HTTP/1.1\r\n"
-             << "Content-Type: "<<mimes[extension]<<";"
+             << "Content-Type: "<<mimes[extension]<<"; "
              << "Content-Length: " << file.length()
              << "\r\n\r\n"
              << file;
@@ -173,7 +173,7 @@ bool HttpFileServer::sendNotFound(int socket, string fileName)
 
     cout<<"File not found, sending header 404"<<endl;
     response_body << "<title>File Not Found</title>\n"
-                  << "<h1>File "<<fileName<<" Not Found</h1>\n"
+                  << "<h1>File \""<<fileName<<"\" not found</h1>\n"
                   << "<p>Please specify correct filename</p>\n";
 
     // Формируем весь ответ вместе с заголовками
