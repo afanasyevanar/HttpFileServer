@@ -5,6 +5,7 @@
 #include <map>
 
 #define DEFAULT_PORT 8080
+#define BUFFER_SIZE 1024
 #define DEFAULT_MIMES_FILE "mimes.txt"
 
 using namespace std;

@@ -15,9 +15,6 @@ using namespace std;
 
 string HttpFileServer::extractFileName(const string request)
 {
-    string get = request.substr(0,3);
-    if (get.compare("GET")!=0) return "";
-
     auto last = request.find_first_of(" ", 4);
     auto first = request.rfind("/", last)+1;
 
@@ -99,7 +96,7 @@ void HttpFileServer::loadMimes(string mimesFilePath)
 string HttpFileServer::readFileFromDir(string fileName)
 {
     char* buffer;
-    int length;
+    ulong length;
 
     ifstream is (directory+"/"+fileName, std::ifstream::binary);
 
@@ -110,10 +107,16 @@ string HttpFileServer::readFileFromDir(string fileName)
         length = is.tellg();
         is.seekg (0, is.beg);
 
+        if (length == 0){
+            cout<<"Empty file"<<endl;
+            is.close();
+            return "";
+        }
+
         buffer = new char [length];
 
         std::cout << "Reading " << length << " characters... "<<endl;
-        is.read (buffer,length);
+        is.read (buffer, length);
 
         if (is){
             std::cout << "all characters read successfully."<<endl;
@@ -121,7 +124,7 @@ string HttpFileServer::readFileFromDir(string fileName)
             std::cout << "error: only " << is.gcount() << " could be read"<<endl;
         }
 
-        return string(buffer,length);
+        return string(buffer, length);
 
         is.close();
 
@@ -146,6 +149,8 @@ bool HttpFileServer::sendFileToClient(int socket, string fileName)
 
     string extension = getExtension(fileName);
 
+    cout<<"Extension: "<<extension<<" MIME type: "<<mimes[extension]<<endl;
+
     stringstream response;
     response << "HTTP/1.1 200 OK\r\n"
              << "Version: HTTP/1.1\r\n"
@@ -155,10 +160,9 @@ bool HttpFileServer::sendFileToClient(int socket, string fileName)
              << file;
 
     cout<<"To client: "<<response.str().size()<<endl;
-    cout<<"extension: "<<extension<<" mime:"<<mimes[extension]<<endl;
 
     auto sendedBytes = send(socket, response.str().c_str(), response.str().size(), 0);
-    cout<<"Bytes sended: "<<sendedBytes<<endl;
+    // cout<<"Bytes sended: "<<sendedBytes<<endl;
 
     if (sendedBytes != response.str().size()) return false;
 
@@ -185,7 +189,7 @@ bool HttpFileServer::sendNotFound(int socket, string fileName)
              << response_body.str();
 
     auto sendedBytes = send(socket, response.str().c_str(), response.str().size(), 0);
-    cout<<"Bytes sended: "<<sendedBytes<<endl;
+    // cout<<"Bytes sended: "<<sendedBytes<<endl;
 
     if (sendedBytes != response.str().size()) return false;
 
@@ -195,8 +199,7 @@ bool HttpFileServer::sendNotFound(int socket, string fileName)
 void HttpFileServer::startToListen()
 {
     int clientSocket;
-    char buf[1024];
-    int bytesRead;
+    char buffer[BUFFER_SIZE];
 
     while(1)
     {
@@ -207,21 +210,22 @@ void HttpFileServer::startToListen()
             exit(1);
         }
 
-        while(1)
-        {
-            bytesRead = recv(clientSocket, buf, 1024, 0);
-            if(bytesRead <= 0) break;
-            cout<<"From client: "<<endl<<buf<<endl;
-            string fileName = extractFileName(string(buf));
-            cout<<"fileName: "<<fileName<<endl;
+        auto bytesRead = recv(clientSocket, buffer, BUFFER_SIZE, 0);
 
-            if (fileName.length() != 0 && isExist(fileName)){
-                sendFileToClient(clientSocket, fileName);
-            }else{
-                sendNotFound(clientSocket, fileName);
-            }
+       // cout<<"From client: "<<endl<<buffer<<endl;
 
-            break;
+        string get = string(buffer).substr(0,3);
+        if (get.compare("GET")!=0) {
+            cout<<"It is not GET request"<<endl;
+        }
+
+        string fileName = extractFileName(string(buffer , bytesRead));
+        cout<<"fileName: "<<fileName<<endl;
+
+        if (isExist(fileName)){
+            sendFileToClient(clientSocket, fileName);
+        }else{
+            sendNotFound(clientSocket, fileName);
         }
 
         close(clientSocket);
