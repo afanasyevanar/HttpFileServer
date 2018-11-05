@@ -11,6 +11,8 @@ add_library(
     STATIC
     ${sources})
 
+target_link_libraries(${target} pthread)
+
 set(executable ${target}Exec)
 
 add_executable(
@@ -18,5 +20,7 @@ add_executable(
     main.cpp
     )
 target_link_libraries(${executable} ${target})
+
+configure_file(mimes.txt mimes.txt COPYONLY)
 
 

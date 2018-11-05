@@ -4,16 +4,19 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <iostream>
 #include <sstream>
-
 #include <fstream>
+#include <pthread.h>
 
 using namespace std;
 
-string HttpFileServer::extractFileName(const string request)
+struct ThreadArgs{
+    HttpFileServer* instance;
+    int clientSocket;
+};
+
+string HttpFileServer::extractFileName(const string request) const
 {
     auto last = request.find_first_of(" ", 4);
     auto first = request.rfind("/", last)+1;
@@ -21,7 +24,7 @@ string HttpFileServer::extractFileName(const string request)
     return request.substr(first,last-first);
 }
 
-HttpFileServer::HttpFileServer(int port)
+HttpFileServer::HttpFileServer(uint16_t port)
 {
     listener = socket(AF_INET, SOCK_STREAM, 0);
     if(listener < 0)
@@ -42,15 +45,13 @@ HttpFileServer::HttpFileServer(int port)
         exit(1);
     }
 
+    loadMimes();
+
     listen(listener, 1);
-
-    loadMimes(DEFAULT_MIMES_FILE);
-
 }
 
 HttpFileServer::~HttpFileServer()
 {
-    cout<<"I am destructor";
     close(listener);
 }
 
@@ -59,7 +60,7 @@ void HttpFileServer::setDirectory(string dir)
     directory = dir;
 }
 
-bool HttpFileServer::isExist(string fileName)
+bool HttpFileServer::isExist(string fileName) const
 {
     ifstream is (directory+"/"+fileName);
 
@@ -74,11 +75,12 @@ bool HttpFileServer::isExist(string fileName)
 
 void HttpFileServer::loadMimes(string mimesFilePath)
 {
-    char* buf = new char[256];
+    int bufSize=256;
+    char* buf = new char[bufSize];
     ifstream is(mimesFilePath);
     if (is) {
         while(!is.eof()){
-            is.getline(buf,256);
+            is.getline(buf, bufSize);
             string input(buf);
             auto spacePos = input.find_first_of(' ');
             string key = input.substr(0, spacePos);
@@ -90,13 +92,13 @@ void HttpFileServer::loadMimes(string mimesFilePath)
     }
 
     is.close();
+
     delete[] buf;
 }
 
-string HttpFileServer::readFileFromDir(string fileName)
+string HttpFileServer::readFileFromDir(string fileName) const
 {
     char* buffer;
-    ulong length;
 
     ifstream is (directory+"/"+fileName, std::ifstream::binary);
 
@@ -104,7 +106,7 @@ string HttpFileServer::readFileFromDir(string fileName)
 
         //получаем длину файла
         is.seekg (0, is.end);
-        length = is.tellg();
+        auto length = is.tellg();
         is.seekg (0, is.beg);
 
         if (length == 0){
@@ -119,14 +121,14 @@ string HttpFileServer::readFileFromDir(string fileName)
         is.read (buffer, length);
 
         if (is){
-            std::cout << "all characters read successfully."<<endl;
+            std::cout << "All characters read successfully."<<endl;
         } else{
-            std::cout << "error: only " << is.gcount() << " could be read"<<endl;
+            std::cout << "Error: only " << is.gcount() << " could be read"<<endl;
         }
 
-        return string(buffer, length);
-
         is.close();
+
+        return string(buffer, length);
 
     }else{
         is.close();
@@ -136,41 +138,51 @@ string HttpFileServer::readFileFromDir(string fileName)
 
 }
 
-string HttpFileServer::getExtension(string fileName)
+string HttpFileServer::getExtension(string fileName) const
 {
     auto dotPos = fileName.find_last_of('.');
-    return fileName.substr(dotPos+1,fileName.length()-dotPos);
+    return fileName.substr(dotPos+1, fileName.length()-dotPos);
 }
 
-bool HttpFileServer::sendFileToClient(int socket, string fileName)
+bool HttpFileServer::sendFileToClient(int socket, string fileName) const
 {
     string file = readFileFromDir(fileName);
     if (file.length() == 0) return false;
 
     string extension = getExtension(fileName);
 
-    cout<<"Extension: "<<extension<<" MIME type: "<<mimes[extension]<<endl;
+    string mime;
+
+    if (mimes.find(extension) != mimes.end()){
+        mime = mimes.at(extension);
+    }else{
+        mime="";
+    }
+
+    cout<<"Extension: "<<extension<<" MIME type: "<<mime<<endl;
 
     stringstream response;
     response << "HTTP/1.1 200 OK\r\n"
              << "Version: HTTP/1.1\r\n"
-             << "Content-Type: "<<mimes[extension]<<"; "
+             << "Content-Type: "<<mime<<"; "
              << "Content-Length: " << file.length()
              << "\r\n\r\n"
              << file;
 
-    cout<<"To client: "<<response.str().size()<<endl;
+    cout<<"To client: "<<response.str().size()<<" bytes"<<endl;
 
     auto sendedBytes = send(socket, response.str().c_str(), response.str().size(), 0);
     // cout<<"Bytes sended: "<<sendedBytes<<endl;
 
     if (sendedBytes != response.str().size()) return false;
 
+    cout<<"Successfully sent"<<endl;
+
     return true;
 
 }
 
-bool HttpFileServer::sendNotFound(int socket, string fileName)
+bool HttpFileServer::sendNotFound(int socket, string fileName) const
 {
     stringstream response_body;
     stringstream response;
@@ -196,10 +208,40 @@ bool HttpFileServer::sendNotFound(int socket, string fileName)
     return true;
 }
 
+void HttpFileServer::processConnection(int clientSocket) const
+{
+    char buffer[BUFFER_SIZE];
+    auto bytesRead = recv(clientSocket, buffer, BUFFER_SIZE, 0);
+
+   // cout<<"From client: "<<endl<<buffer<<endl;
+
+    string get = string(buffer).substr(0,3);
+    if (get.compare("GET")!=0) {
+        cout<<"It is not GET request"<<endl;
+    }
+
+    string fileName = extractFileName(string(buffer , bytesRead));
+    cout<<"fileName: "<<fileName<<endl;
+
+    if (isExist(fileName)){
+        sendFileToClient(clientSocket, fileName);
+    }else{
+        sendNotFound(clientSocket, fileName);
+    }
+
+    close(clientSocket);
+}
+
+void* HttpFileServer::processConnectionInThread(void *threadArgs)
+{
+    ThreadArgs *args  = reinterpret_cast<ThreadArgs*>(threadArgs);
+    args->instance->processConnection(args->clientSocket);
+}
+
 void HttpFileServer::startToListen()
 {
     int clientSocket;
-    char buffer[BUFFER_SIZE];
+    pthread_t thread;
 
     while(1)
     {
@@ -209,26 +251,14 @@ void HttpFileServer::startToListen()
             perror("Error during accept");
             exit(1);
         }
+        
+        ThreadArgs args;
+        args.instance=this;
+        args.clientSocket=clientSocket;
 
-        auto bytesRead = recv(clientSocket, buffer, BUFFER_SIZE, 0);
+        pthread_create(&thread, NULL, processConnectionInThread, &args);
+        pthread_join(thread, NULL);
 
-       // cout<<"From client: "<<endl<<buffer<<endl;
-
-        string get = string(buffer).substr(0,3);
-        if (get.compare("GET")!=0) {
-            cout<<"It is not GET request"<<endl;
-        }
-
-        string fileName = extractFileName(string(buffer , bytesRead));
-        cout<<"fileName: "<<fileName<<endl;
-
-        if (isExist(fileName)){
-            sendFileToClient(clientSocket, fileName);
-        }else{
-            sendNotFound(clientSocket, fileName);
-        }
-
-        close(clientSocket);
     }
     close(listener);
 }
