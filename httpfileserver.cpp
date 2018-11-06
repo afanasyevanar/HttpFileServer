@@ -18,8 +18,8 @@ struct ThreadArgs{
 
 string HttpFileServer::extractFileName(const string request) const
 {
-    auto last = request.find_first_of(" ", 4);
-    auto first = request.rfind("/", last)+1;
+	auto first = request.find_first_of("/")+1;
+	auto last = request.find(" ", first);
 
     return request.substr(first,last-first);
 }
